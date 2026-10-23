@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import closing
 from pathlib import Path
 import os
 import sqlite3
@@ -258,7 +259,7 @@ class EvidenceStore:
         temporary = Path(temporary_name)
         try:
             source_uri = source_path.resolve().as_uri() + "?mode=ro"
-            with sqlite3.connect(source_uri, uri=True, timeout=5.0) as source_db:
+            with closing(sqlite3.connect(source_uri, uri=True, timeout=5.0)) as source_db:
                 integrity = source_db.execute("PRAGMA integrity_check").fetchone()[0]
                 if integrity != "ok":
                     raise sqlite3.DatabaseError(
@@ -298,7 +299,7 @@ class EvidenceStore:
                         "restore source is missing append-only evidence triggers"
                     )
 
-                with sqlite3.connect(str(temporary), timeout=5.0) as restored_db:
+                with closing(sqlite3.connect(str(temporary), timeout=5.0)) as restored_db:
                     source_db.backup(restored_db)
                     restored_integrity = restored_db.execute(
                         "PRAGMA integrity_check"
