@@ -76,6 +76,6 @@ CI runs the same test command on pull requests and pushes to the default branch.
 - [x] Loopback-only authenticated HTTP adapter with bounded JSON input and explicit error contracts; new HTTP regression suite awaiting CI verification
 - [ ] Production API authentication, authorization/tenant isolation, token rotation, and rate limiting
 - [ ] Production migration policy, off-site backup retention, restore drills, and operational recovery
-- [ ] Gitleaks secret scanning and Python CodeQL workflow added; current-head scan results pending. Third-party dependency inventory remains to be formalized before claiming dependency-audit coverage.
+- [x] Gitleaks scan and Python CodeQL analysis completed successfully on the prior current head (run #40005861253); review any CodeQL alerts in repository Security before release. Third-party dependency audit is not claimed because no dependency manifest exists.
 - [ ] Deployment supervision, health monitoring, release gate, and rollback documentation
 - [ ] End-to-end deployment tests proving missing evidence can never produce PASS
