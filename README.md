@@ -36,8 +36,8 @@ The core is dependency-free. CI is expected to run the same command on every pul
 
 ## Readiness status
 
-- [x] Local SQLite evidence store with atomic batch writes, unique IDs, schema versioning, and update/delete guards (unit-tested; not yet a production service)
-- [x] Deterministic three-valued verdict engine and edge-case tests
+- [ ] Local SQLite evidence store implemented with atomic batch writes, unique IDs, schema versioning, and update/delete guards; tests added, current-head CI pending
+- [ ] Deterministic three-valued verdict engine and edge-case tests (prior core-only CI passed; current-head verification pending)
 - [ ] API contract, authentication, and authorization boundaries
 - [ ] Database schema, migrations, transaction and restore tests
 - [ ] Security/dependency scanning and secret handling
