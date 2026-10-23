@@ -110,6 +110,10 @@ class DeriveVerdictTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unique"):
             derive_verdict(["build", "build"], [])
 
+    def test_string_is_not_accepted_as_criterion_collection(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not a string"):
+            derive_verdict("build", [])
+
 
 if __name__ == "__main__":
     unittest.main()
