@@ -12,54 +12,70 @@ The platform uses three outcomes:
 
 Missing evidence must never be treated as success. Conflicting evidence is preserved and must not be silently rewritten; a recorded failure takes precedence over a pass for the same required criterion until a separately specified resolution policy exists.
 
-## Initial implementation scope
+## Evidence persistence
 
-The first implementation is deliberately a small, deterministic core:
+`EvidenceStore` stores immutable evidence records in SQLite with atomic batch writes, unique evidence IDs, schema-version checks, and update/delete guards. `backup_to()` creates a consistent integrity-checked copy without overwriting an existing destination. `EvidenceStore.restore_to(source, destination)` validates the source schema and append-only triggers, verifies the restored copy, and refuses to replace existing files.
 
-1. Represent evidence as immutable records with a stable identifier, criterion, outcome, source, and observation timestamp.
-2. Derive a verdict from an explicit list of required criteria and evidence records.
-3. Return missing and failed criteria plus the IDs of evidence used, so a result is explainable.
-4. Reject malformed evidence and duplicate evidence IDs.
-5. Verify the contract with unit tests and run them in GitHub Actions.
+These are local persistence and recovery primitives, not a production retention policy. SQLite triggers do not protect against an operator who can alter the database schema. Production deployment still needs off-site backups, retention, access controls, migration policy, and tested recovery objectives.
 
-The current slice includes a local SQLite evidence store with atomic batch writes, schema-version checks, integrity-checked backups, and validated restore-to-new-path support. It does **not** yet provide an HTTP API, authentication, multi-tenant authorization, production backup retention/off-site recovery, deployment, or operational recovery. SQLite triggers guard against ordinary record updates/deletes, but are not tamper-proof against an operator who can alter the database schema. These are explicit follow-up work, not implied capabilities.
+## Local HTTP API
 
-## Local evidence persistence
+The repository includes a small standard-library HTTP adapter for local integrations. It binds only to `127.0.0.1`; it deliberately does not offer a public-network bind mode. Evidence reads and writes require a bearer token of at least 32 characters. The health endpoint exposes only a static liveness result.
 
-`EvidenceStore` stores immutable evidence records in a SQLite database and derives verdicts from the records currently persisted there. It refuses duplicate evidence IDs, rolls back a batch if any row fails, and normalizes observation timestamps to UTC. The store is a local library primitive; do not expose its database file to untrusted writers or treat it as a multi-tenant production service. `backup_to()` writes a consistent integrity-checked copy without overwriting an existing destination. `EvidenceStore.restore_to(source, destination)` validates the source schema and append-only triggers, then publishes a verified copy to a new path; it refuses to replace existing files. These are local primitives, not a production retention policy or disaster-recovery service.
+Start it with a local database and a strong token:
 
-```python
-from datetime import datetime, timezone
-from no_presumed_pass import EvidenceOutcome, EvidenceRecord, EvidenceStore
+```bash
+export NO_PRESUMED_PASS_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python -m no_presumed_pass.http_api --database evidence.sqlite3 --port 8765
+```
 
-with EvidenceStore("evidence.sqlite3") as store:
-    store.append(EvidenceRecord(
-        evidence_id="ci-run-123",
-        criterion="unit-tests",
-        outcome=EvidenceOutcome.PASS,
-        source="github-actions",
-        observed_at=datetime.now(timezone.utc),
-    ))
-    verdict = store.derive(("unit-tests",))
-    print(verdict.status.value)
+PowerShell equivalent:
+
+```powershell
+$env:NO_PRESUMED_PASS_API_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
+python -m no_presumed_pass.http_api --database evidence.sqlite3 --port 8765
+```
+
+The token is held in the process environment and must not be committed, printed into CI logs, or embedded in frontend assets. This adapter uses HTTP on loopback and a single configured token: **do not expose it beyond the local machine or treat it as a multi-user production service**. A production deployment needs TLS at a trusted reverse proxy, user/tenant authorization, rotation and revocation, rate limits, audit retention, and a hardened service supervisor.
+
+### Routes
+
+- `GET /healthz` — unauthenticated liveness check; returns only `{"status":"ok"}`.
+- `POST /v1/evidence` — authenticated JSON evidence insert; rejects duplicate IDs and malformed or timezone-naive records.
+- `GET /v1/evidence` — authenticated evidence listing; optional single `criterion` query parameter.
+- `GET /v1/verdict?criterion=build&criterion=tests` — authenticated verdict derived from persisted evidence. Repeat `criterion` for each required criterion.
+
+Writes are capped at 64 KiB, unsupported routes return explicit errors, duplicate JSON keys are rejected, responses are not cacheable, and logs omit request bodies and authorization headers.
+
+Example insert body:
+
+```json
+{
+  "evidence_id": "ci-run-123",
+  "criterion": "unit-tests",
+  "outcome": "PASS",
+  "source": "github-actions",
+  "observed_at": "2026-10-24T00:00:00Z"
+}
 ```
 
 ## Development
 
-Requires Python 3.11 or newer.
+Requires Python 3.11 or newer. The core and HTTP adapter use only the Python standard library.
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-The core is dependency-free. CI is expected to run the same command on every pull request and push to the default branch.
+CI runs the same test command on pull requests and pushes to the default branch. HTTP tests start a loopback server on an ephemeral port and cover authentication, evidence-to-verdict behavior, missing evidence, duplicate IDs/JSON keys, invalid timestamps, payload size, media type, and unsupported routes.
 
 ## Readiness status
 
-- [x] Local SQLite evidence store with atomic batch writes, unique IDs, schema versioning, update/delete guards, and integrity-checked local backup/restore primitives; regression tests passed in current-head CI
-- [x] Deterministic three-valued verdict engine and edge-case tests passed in current-head CI
-- [ ] API contract, authentication, and authorization boundaries
+- [x] Local SQLite evidence store with atomic batch writes, schema checks, append-only guards, and integrity-checked local backup/restore; current-head CI passed
+- [x] Deterministic three-valued verdict engine; current-head CI passed
+- [x] Loopback-only authenticated HTTP adapter with bounded JSON input and explicit error contracts; new HTTP regression suite awaiting CI verification
+- [ ] Production API authentication, authorization/tenant isolation, token rotation, and rate limiting
 - [ ] Production migration policy, off-site backup retention, restore drills, and operational recovery
 - [ ] Security/dependency scanning and secret handling
-- [ ] Reproducible CI, release gate, health checks, deployment and rollback documentation
-- [ ] End-to-end tests proving missing evidence can never produce PASS
+- [ ] Deployment supervision, health monitoring, release gate, and rollback documentation
+- [ ] End-to-end deployment tests proving missing evidence can never produce PASS
