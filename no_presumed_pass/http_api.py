@@ -119,7 +119,11 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
             self._send_json(status, {"error": {"code": code, "message": message}})
 
         def _authorized(self) -> bool:
-            header = self.headers.get("Authorization", "")
+            # Duplicate Authorization fields are ambiguous across HTTP stacks.
+            # Accept exactly one field so a proxy and this handler cannot select
+            # different credentials for the same request.
+            authorization_headers = self.headers.get_all("Authorization", [])
+            header = authorization_headers[0] if len(authorization_headers) == 1 else ""
             scheme, separator, supplied = header.partition(" ")
             valid = (
                 separator == " "
@@ -223,7 +227,12 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
             if not self._authorized():
                 return
 
-            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            content_type_headers = self.headers.get_all("Content-Type", [])
+            if len(content_type_headers) != 1:
+                self._error(400, "invalid_content_type", "Exactly one Content-Type header is required.")
+                self.close_connection = True
+                return
+            content_type = content_type_headers[0].split(";", 1)[0].strip().lower()
             if content_type != "application/json":
                 self._error(415, "unsupported_media_type", "Content-Type must be application/json.")
                 return
