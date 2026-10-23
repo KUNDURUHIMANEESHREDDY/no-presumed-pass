@@ -229,12 +229,13 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
             self._send_json(201, {"evidence": _record_payload(record)})
 
         def _method_not_allowed(self) -> None:
+            # Set the status before send_response(), which invokes request logging.
+            self._response_status = 405
             self.send_response(405)
             self.send_header("Allow", "GET, POST")
             self.send_header("Content-Length", "0")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self._response_status = 405
 
         do_PUT = _method_not_allowed
         do_PATCH = _method_not_allowed
