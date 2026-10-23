@@ -1,7 +1,7 @@
 """Evidence-derived, three-valued verification primitives."""
 
-from .store import EvidenceStore
 from .verdict import EvidenceOutcome, EvidenceRecord, Verdict, VerdictStatus, derive_verdict
+from .store import EvidenceStore
 
 __all__ = [
     "EvidenceOutcome",
