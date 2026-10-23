@@ -154,6 +154,12 @@ class EvidenceHTTPAPITests(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertEqual(body["error"]["code"], "invalid_query")
 
+    def test_verdict_rejects_excessive_query_parameters_before_parsing_all(self) -> None:
+        query = "&".join("criterion=check" for _ in range(104))
+        status, body, _ = self.request("GET", f"/v1/verdict?{query}")
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "invalid_query")
+
     def test_missing_required_evidence_is_indeterminate(self) -> None:
         status, _, _ = self.request("POST", "/v1/evidence", self.evidence("build-1", "build"))
         self.assertEqual(status, 201)
