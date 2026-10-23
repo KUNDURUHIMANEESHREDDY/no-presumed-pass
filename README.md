@@ -20,7 +20,7 @@ These are local persistence and recovery primitives, not a production retention 
 
 ## Local HTTP API
 
-The repository includes a small standard-library HTTP adapter for local integrations. It binds only to `127.0.0.1`; it deliberately does not offer a public-network bind mode. Evidence reads and writes require a bearer token of at least 32 characters. The health endpoint exposes only a static liveness result.
+The repository includes a small standard-library HTTP adapter for local integrations. It binds only to `127.0.0.1`; it deliberately does not offer a public-network bind mode. Evidence reads and writes require a bearer token of at least 32 characters. `/healthz` reports process liveness; `/readyz` performs a bounded read against SQLite and returns 503 with a generic error if storage is unavailable.
 
 Start it with a local database and a strong token:
 
@@ -41,6 +41,7 @@ The token is held in the process environment and must not be committed, printed 
 ### Routes
 
 - `GET /healthz` — unauthenticated liveness check; returns only `{"status":"ok"}`.
+- `GET /readyz` — unauthenticated readiness check; verifies that the evidence store can serve a bounded read and returns a generic 503 without database details when it cannot.
 - `POST /v1/evidence` — authenticated JSON evidence insert; rejects duplicate IDs and malformed or timezone-naive records.
 - `GET /v1/evidence` — authenticated evidence listing with bounded pagination. Optional `criterion`, `limit` (default 50, maximum 100), and `offset` (maximum 1,000,000) query parameters. The response includes `pagination.has_more` and `pagination.next_offset`; results use deterministic observation-time/evidence-ID ordering.
 - `GET /v1/verdict?criterion=build&criterion=tests` — authenticated verdict derived from persisted evidence. Repeat `criterion` for each required criterion.
@@ -73,6 +74,7 @@ CI runs the same test command on pull requests and pushes to the default branch.
 
 - [x] Local SQLite evidence store with atomic batch writes, schema checks, append-only guards, and integrity-checked local backup/restore; current-head CI passed
 - [x] Deterministic three-valued verdict engine; current-head CI passed
+- [ ] Database-backed `/readyz` regression test; awaiting current-head CI verification
 - [x] Loopback-only authenticated HTTP adapter with bounded JSON input, bounded evidence pagination, and explicit error contracts; CI run #40014396673 and Security run #40014396690 passed after pagination was added. Review CodeQL alerts separately before release.
 - [ ] Production API authentication, authorization/tenant isolation, token rotation, and rate limiting
 - [ ] Production migration policy, off-site backup retention, restore drills, and operational recovery
