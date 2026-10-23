@@ -74,6 +74,8 @@ def derive_verdict(
     is INDETERMINATE rather than a vacuous PASS.
     """
 
+    if isinstance(required_criteria, (str, bytes)):
+        raise ValueError("required_criteria must be an iterable of criterion strings, not a string")
     criteria = tuple(required_criteria)
     if any(not isinstance(item, str) or not item.strip() for item in criteria):
         raise ValueError("required criteria must be non-empty strings")
