@@ -42,7 +42,7 @@ The token is held in the process environment and must not be committed, printed 
 
 - `GET /healthz` — unauthenticated liveness check; returns only `{"status":"ok"}`.
 - `POST /v1/evidence` — authenticated JSON evidence insert; rejects duplicate IDs and malformed or timezone-naive records.
-- `GET /v1/evidence` — authenticated evidence listing; optional single `criterion` query parameter.
+- `GET /v1/evidence` — authenticated evidence listing with bounded pagination. Optional `criterion`, `limit` (default 50, maximum 100), and `offset` (maximum 1,000,000) query parameters. The response includes `pagination.has_more` and `pagination.next_offset`; results use deterministic observation-time/evidence-ID ordering.
 - `GET /v1/verdict?criterion=build&criterion=tests` — authenticated verdict derived from persisted evidence. Repeat `criterion` for each required criterion.
 
 Writes are capped at 64 KiB, unsupported routes return explicit errors, duplicate JSON keys are rejected, responses are not cacheable, and logs omit request bodies and authorization headers.
@@ -67,13 +67,13 @@ Requires Python 3.11 or newer. The core and HTTP adapter use only the Python sta
 python -m unittest discover -s tests -v
 ```
 
-CI runs the same test command on pull requests and pushes to the default branch. HTTP tests start a loopback server on an ephemeral port and cover authentication, evidence-to-verdict behavior, missing evidence, duplicate IDs/JSON keys, invalid timestamps, payload size, media type, and unsupported routes.
+CI runs the same test command on pull requests and pushes to the default branch. HTTP tests start a loopback server on an ephemeral port and cover authentication, evidence-to-verdict behavior, missing evidence, duplicate IDs/JSON keys, invalid timestamps, payload size, media type, unsupported routes, deterministic pagination, and rejection of malformed or out-of-range pagination parameters.
 
 ## Readiness status
 
 - [x] Local SQLite evidence store with atomic batch writes, schema checks, append-only guards, and integrity-checked local backup/restore; current-head CI passed
 - [x] Deterministic three-valued verdict engine; current-head CI passed
-- [x] Loopback-only authenticated HTTP adapter with bounded JSON input and explicit error contracts; new HTTP regression suite awaiting CI verification
+- [x] Loopback-only authenticated HTTP adapter with bounded JSON input, bounded evidence pagination, and explicit error contracts; current-head CI and Security workflows passed before the pagination change
 - [ ] Production API authentication, authorization/tenant isolation, token rotation, and rate limiting
 - [ ] Production migration policy, off-site backup retention, restore drills, and operational recovery
 - [x] Gitleaks secret scanning and Python CodeQL analysis are configured and have completed successfully on a recent PR head; review CodeQL alerts in repository Security before release. Third-party dependency audit is not claimed because no dependency manifest exists.
