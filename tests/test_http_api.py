@@ -179,6 +179,22 @@ class EvidenceHTTPAPITests(unittest.TestCase):
         status, _, _ = self.request("POST", "/v1/evidence", naive)
         self.assertEqual(status, 400)
 
+    def test_duplicate_content_length_headers_are_rejected(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v1/evidence")
+            connection.putheader("Authorization", f"Bearer {TOKEN}")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", "2")
+            connection.putheader("Content-Length", "3")
+            connection.endheaders(b"{}")
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            self.assertEqual(response.status, 400)
+            self.assertEqual(body["error"]["code"], "invalid_content_length")
+        finally:
+            connection.close()
+
     def test_body_limit_and_media_type_are_enforced(self) -> None:
         status, body, _ = self.request(
             "POST", "/v1/evidence", b"x" * (MAX_BODY_BYTES + 1)
