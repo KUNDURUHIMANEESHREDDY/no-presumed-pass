@@ -76,6 +76,18 @@ class EvidenceHTTPAPITests(unittest.TestCase):
         self.assertEqual(body, {"status": "ok"})
         self.assertEqual(headers["cache-control"], "no-store")
 
+    def test_readiness_reflects_storage_availability_without_leaking_details(self) -> None:
+        status, body, _ = self.request("GET", "/readyz", token=None)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"status": "ready"})
+
+        self.store.close()
+        status, body, _ = self.request("GET", "/readyz", token=None)
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"]["code"], "not_ready")
+        self.assertNotIn("sqlite", json.dumps(body).lower())
+        self.assertNotIn(str(self.database), json.dumps(body))
+
     def test_evidence_read_and_write_require_bearer_token(self) -> None:
         status, body, _ = self.request("POST", "/v1/evidence", self.evidence("e-1", "build"), token=None)
         self.assertEqual(status, 401)
