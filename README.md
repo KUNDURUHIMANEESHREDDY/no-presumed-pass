@@ -73,7 +73,7 @@ CI runs the same test command on pull requests and pushes to the default branch.
 
 - [x] Local SQLite evidence store with atomic batch writes, schema checks, append-only guards, and integrity-checked local backup/restore; current-head CI passed
 - [x] Deterministic three-valued verdict engine; current-head CI passed
-- [x] Loopback-only authenticated HTTP adapter with bounded JSON input, bounded evidence pagination, and explicit error contracts; current-head CI and Security workflows passed before the pagination change
+- [x] Loopback-only authenticated HTTP adapter with bounded JSON input, bounded evidence pagination, and explicit error contracts; CI run #40014396673 and Security run #40014396690 passed after pagination was added. Review CodeQL alerts separately before release.
 - [ ] Production API authentication, authorization/tenant isolation, token rotation, and rate limiting
 - [ ] Production migration policy, off-site backup retention, restore drills, and operational recovery
 - [x] Gitleaks secret scanning and Python CodeQL analysis are configured and have completed successfully on a recent PR head; review CodeQL alerts in repository Security before release. Third-party dependency audit is not claimed because no dependency manifest exists.
