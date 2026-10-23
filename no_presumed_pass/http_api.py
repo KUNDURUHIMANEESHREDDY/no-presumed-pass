@@ -140,6 +140,16 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
             if parsed.path == "/healthz":
                 self._send_json(200, {"status": "ok"})
                 return
+            if parsed.path == "/readyz":
+                # Liveness only proves the HTTP process is responsive. Readiness
+                # must also prove that the evidence store can serve a bounded read.
+                try:
+                    store.list_evidence(limit=1)
+                except Exception:  # noqa: BLE001 - do not leak storage details
+                    self._error(503, "not_ready", "Evidence storage is unavailable.")
+                else:
+                    self._send_json(200, {"status": "ready"})
+                return
             if parsed.path not in {"/v1/evidence", "/v1/verdict"}:
                 self._error(404, "not_found", "Route not found.")
                 return
