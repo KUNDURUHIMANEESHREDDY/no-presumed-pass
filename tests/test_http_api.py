@@ -200,6 +200,40 @@ class EvidenceHTTPAPITests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_duplicate_authorization_headers_are_rejected(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v1/evidence")
+            connection.putheader("Authorization", f"Bearer {TOKEN}")
+            connection.putheader("Authorization", "Bearer different-token-that-is-also-long")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", "2")
+            connection.endheaders(b"{}")
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            self.assertEqual(response.status, 401)
+            self.assertEqual(body["error"]["code"], "unauthorized")
+            self.assertEqual(self.store.list_evidence(), ())
+        finally:
+            connection.close()
+
+    def test_duplicate_content_type_headers_are_rejected(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v1/evidence")
+            connection.putheader("Authorization", f"Bearer {TOKEN}")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Type", "text/plain")
+            connection.putheader("Content-Length", "2")
+            connection.endheaders(b"{}")
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            self.assertEqual(response.status, 400)
+            self.assertEqual(body["error"]["code"], "invalid_content_type")
+            self.assertEqual(self.store.list_evidence(), ())
+        finally:
+            connection.close()
+
     def test_duplicate_content_length_headers_are_rejected(self) -> None:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
         try:
