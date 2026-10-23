@@ -57,6 +57,40 @@ class EvidenceStoreTests(unittest.TestCase):
         with sqlite3.connect(destination) as connection:
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
+    def test_restore_creates_a_verified_copy_at_a_new_path(self) -> None:
+        self.store.append_many((record("build", "build"), record("tests", "tests")))
+        backup = self.database.with_name("evidence-backup.sqlite3")
+        restored = self.database.with_name("evidence-restored.sqlite3")
+        self.store.backup_to(backup)
+
+        self.assertEqual(EvidenceStore.restore_to(backup, restored), restored)
+        with EvidenceStore(restored) as recovered:
+            verdict = recovered.derive(("build", "tests"))
+            self.assertIs(verdict.status, VerdictStatus.PASS)
+            self.assertEqual(verdict.evidence_ids, ("build", "tests"))
+
+    def test_restore_never_overwrites_existing_destination(self) -> None:
+        backup = self.database.with_name("evidence-backup.sqlite3")
+        destination = self.database.with_name("preserve-existing.db")
+        self.store.backup_to(backup)
+        destination.write_bytes(b"existing user data")
+
+        with self.assertRaises(FileExistsError):
+            EvidenceStore.restore_to(backup, destination)
+
+        self.assertEqual(destination.read_bytes(), b"existing user data")
+
+    def test_restore_rejects_newer_schema_without_publishing(self) -> None:
+        backup = self.database.with_name("newer-schema.sqlite3")
+        destination = self.database.with_name("must-not-exist.sqlite3")
+        self.store.backup_to(backup)
+        with sqlite3.connect(backup) as connection:
+            connection.execute("PRAGMA user_version = 999")
+
+        with self.assertRaisesRegex(RuntimeError, "does not match supported version"):
+            EvidenceStore.restore_to(backup, destination)
+        self.assertFalse(destination.exists())
+
     def test_backup_never_overwrites_an_existing_destination(self) -> None:
         destination = self.database.with_name("preserve-existing.db")
         destination.write_bytes(b"existing user data")
