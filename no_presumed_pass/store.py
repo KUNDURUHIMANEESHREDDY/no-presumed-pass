@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 from threading import RLock
@@ -175,7 +175,7 @@ class EvidenceStore:
                 criterion=row["criterion"],
                 outcome=EvidenceOutcome(row["outcome"]),
                 source=row["source"],
-                observed_at=__import__("datetime").datetime.fromisoformat(row["observed_at"]),
+                observed_at=datetime.fromisoformat(row["observed_at"]),
             )
             for row in rows
         )
