@@ -142,7 +142,20 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
             if not self._authorized():
                 return
 
-            query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=False)
+            try:
+                query = parse_qs(
+                    parsed.query,
+                    keep_blank_values=True,
+                    strict_parsing=False,
+                    max_num_fields=MAX_CRITERIA + 3,
+                )
+            except ValueError:
+                self._error(
+                    400,
+                    "invalid_query",
+                    f"Too many query parameters; at most {MAX_CRITERIA} criteria are supported.",
+                )
+                return
             allowed = (
                 {"criterion", "limit", "offset"}
                 if parsed.path == "/v1/evidence"
