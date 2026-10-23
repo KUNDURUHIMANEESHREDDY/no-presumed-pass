@@ -23,6 +23,9 @@ from .verdict import EvidenceOutcome, EvidenceRecord, Verdict, VerdictStatus
 
 MAX_BODY_BYTES = 64 * 1024
 MAX_CRITERIA = 100
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 100
+MAX_PAGE_OFFSET = 1_000_000
 _MIN_TOKEN_LENGTH = 32
 _LOG = logging.getLogger("no_presumed_pass.http")
 
@@ -34,6 +37,25 @@ def _json_object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[st
             raise ValueError("duplicate JSON object key")
         result[key] = value
     return result
+
+
+def _page_integer(
+    query: dict[str, list[str]],
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    values = query.get(name)
+    if values is None:
+        return default
+    if len(values) != 1 or not values[0].isascii() or not values[0].isdecimal():
+        raise ValueError(f"{name} must be supplied once as a decimal integer")
+    value = int(values[0])
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} is outside the supported range")
+    return value
 
 
 def _record_payload(record: EvidenceRecord) -> dict[str, str]:
@@ -121,7 +143,11 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
                 return
 
             query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=False)
-            allowed = {"criterion"} if parsed.path == "/v1/evidence" else {"criterion"}
+            allowed = (
+                {"criterion", "limit", "offset"}
+                if parsed.path == "/v1/evidence"
+                else {"criterion"}
+            )
             if set(query) - allowed:
                 self._error(400, "invalid_query", "Unsupported query parameter.")
                 return
@@ -132,11 +158,38 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
                     self._error(400, "invalid_query", "criterion must be supplied at most once and be non-empty.")
                     return
                 try:
-                    records = store.list_evidence(values[0] if values else None)
+                    limit = _page_integer(
+                        query, "limit", DEFAULT_PAGE_SIZE, minimum=1, maximum=MAX_PAGE_SIZE
+                    )
+                    offset = _page_integer(
+                        query, "offset", 0, minimum=0, maximum=MAX_PAGE_OFFSET
+                    )
+                    records = store.list_evidence(
+                        values[0] if values else None,
+                        limit=limit + 1,
+                        offset=offset,
+                    )
                 except ValueError:
-                    self._error(400, "invalid_query", "Invalid criterion.")
+                    self._error(
+                        400,
+                        "invalid_query",
+                        f"Use limit=1..{MAX_PAGE_SIZE} and offset=0..{MAX_PAGE_OFFSET}; each may appear once.",
+                    )
                     return
-                self._send_json(200, {"evidence": [_record_payload(item) for item in records]})
+                has_more = len(records) > limit
+                page = records[:limit]
+                self._send_json(
+                    200,
+                    {
+                        "evidence": [_record_payload(item) for item in page],
+                        "pagination": {
+                            "limit": limit,
+                            "offset": offset,
+                            "has_more": has_more,
+                            "next_offset": offset + limit if has_more else None,
+                        },
+                    },
+                )
                 return
 
             criteria = query.get("criterion", [])
