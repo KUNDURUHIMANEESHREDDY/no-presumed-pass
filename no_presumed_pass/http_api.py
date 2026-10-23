@@ -214,19 +214,21 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
             if content_type != "application/json":
                 self._error(415, "unsupported_media_type", "Content-Type must be application/json.")
                 return
-            raw_length = self.headers.get("Content-Length")
-            if raw_length is None:
+            content_lengths = self.headers.get_all("Content-Length", [])
+            if not content_lengths:
                 self._error(411, "length_required", "Content-Length is required.")
                 self.close_connection = True
                 return
-            try:
-                length = int(raw_length)
-            except ValueError:
-                length = -1
-            if length < 0:
-                self._error(400, "invalid_content_length", "Content-Length must be a non-negative integer.")
+            if len(content_lengths) != 1:
+                self._error(400, "invalid_content_length", "Exactly one Content-Length header is required.")
                 self.close_connection = True
                 return
+            raw_length = content_lengths[0]
+            if not raw_length.isascii() or not raw_length.isdecimal():
+                self._error(400, "invalid_content_length", "Content-Length must contain ASCII decimal digits only.")
+                self.close_connection = True
+                return
+            length = int(raw_length)
             if length > MAX_BODY_BYTES:
                 self._error(413, "payload_too_large", "Request body exceeds the 64 KiB limit.")
                 self.close_connection = True
