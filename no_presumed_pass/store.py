@@ -232,6 +232,95 @@ class EvidenceStore:
         finally:
             temporary.unlink(missing_ok=True)
 
+    @classmethod
+    def restore_to(cls, source: str | Path, destination: str | Path) -> Path:
+        """Restore a verified backup to a new path without replacing existing data.
+
+        The source is opened read-only. Its integrity, schema version, evidence
+        table, and append-only triggers are checked before a copy is published.
+        The destination must not exist; this method never overwrites a live DB.
+        """
+        source_path = Path(source)
+        target = Path(destination)
+        if not source_path.is_file():
+            raise FileNotFoundError(source_path)
+        if source_path.resolve() == target.resolve():
+            raise ValueError("restore source and destination must be different paths")
+        if target.exists():
+            raise FileExistsError(target)
+        if not target.parent.is_dir():
+            raise FileNotFoundError(target.parent)
+
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".restore-tmp", dir=target.parent
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            source_uri = source_path.resolve().as_uri() + "?mode=ro"
+            with sqlite3.connect(source_uri, uri=True, timeout=5.0) as source_db:
+                integrity = source_db.execute("PRAGMA integrity_check").fetchone()[0]
+                if integrity != "ok":
+                    raise sqlite3.DatabaseError(
+                        f"restore source integrity check failed: {integrity}"
+                    )
+                if source_db.execute("PRAGMA foreign_key_check").fetchall():
+                    raise sqlite3.DatabaseError(
+                        "restore source contains foreign-key violations"
+                    )
+                version = int(source_db.execute("PRAGMA user_version").fetchone()[0])
+                if version != _SCHEMA_VERSION:
+                    raise RuntimeError(
+                        f"restore source schema version {version} does not match "
+                        f"supported version {_SCHEMA_VERSION}"
+                    )
+                columns = [
+                    row[1] for row in source_db.execute("PRAGMA table_info(evidence)")
+                ]
+                expected_columns = [
+                    "evidence_id", "criterion", "outcome", "source",
+                    "observed_at", "recorded_at",
+                ]
+                if columns != expected_columns:
+                    raise sqlite3.DatabaseError(
+                        f"restore source evidence schema is unexpected: {columns!r}"
+                    )
+                triggers = {
+                    row[0]
+                    for row in source_db.execute(
+                        "SELECT name FROM sqlite_master "
+                        "WHERE type = 'trigger' AND tbl_name = 'evidence'"
+                    )
+                }
+                required_triggers = {"evidence_no_update", "evidence_no_delete"}
+                if not required_triggers.issubset(triggers):
+                    raise sqlite3.DatabaseError(
+                        "restore source is missing append-only evidence triggers"
+                    )
+
+                with sqlite3.connect(str(temporary), timeout=5.0) as restored_db:
+                    source_db.backup(restored_db)
+                    restored_integrity = restored_db.execute(
+                        "PRAGMA integrity_check"
+                    ).fetchone()[0]
+                    if restored_integrity != "ok":
+                        raise sqlite3.DatabaseError(
+                            f"restored database integrity check failed: {restored_integrity}"
+                        )
+                    if int(
+                        restored_db.execute("PRAGMA user_version").fetchone()[0]
+                    ) != _SCHEMA_VERSION:
+                        raise RuntimeError("restored database schema version changed")
+
+            with temporary.open("rb") as restored_file:
+                os.fsync(restored_file.fileno())
+
+            # Atomic no-clobber publication: a concurrent file creation wins.
+            os.link(temporary, target)
+            return target
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def derive(self, required_criteria: Iterable[str]) -> Verdict:
         """Derive a verdict from the records currently persisted in this store."""
         return derive_verdict(required_criteria, self.list_evidence())
