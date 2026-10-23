@@ -185,6 +185,21 @@ class EvidenceHTTPAPITests(unittest.TestCase):
         status, _, _ = self.request("POST", "/v1/evidence", naive)
         self.assertEqual(status, 400)
 
+    def test_extremely_long_content_length_is_rejected_without_integer_conversion(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v1/evidence")
+            connection.putheader("Authorization", f"Bearer {TOKEN}")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", "9" * 5000)
+            connection.endheaders()
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            self.assertEqual(response.status, 413)
+            self.assertEqual(body["error"]["code"], "payload_too_large")
+        finally:
+            connection.close()
+
     def test_duplicate_content_length_headers_are_rejected(self) -> None:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
         try:
