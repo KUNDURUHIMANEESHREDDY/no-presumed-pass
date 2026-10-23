@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 import sqlite3
+import tempfile
 from threading import RLock
 from typing import Iterable
 
@@ -179,6 +181,56 @@ class EvidenceStore:
             )
             for row in rows
         )
+
+    def backup_to(self, destination: str | Path) -> Path:
+        """Create a consistent backup without overwriting an existing destination.
+
+        The temporary database is created in the destination directory so the
+        final hard-link operation is same-filesystem and atomic. If the target
+        already exists, this method leaves it untouched.
+        """
+        target = Path(destination)
+        if target.exists():
+            raise FileExistsError(target)
+        if not target.parent.is_dir():
+            raise FileNotFoundError(target.parent)
+
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".backup-tmp", dir=target.parent
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            with self._lock:
+                backup_connection = sqlite3.connect(str(temporary), timeout=5.0)
+                try:
+                    self._connection.backup(backup_connection)
+                    integrity = backup_connection.execute(
+                        "PRAGMA integrity_check"
+                    ).fetchone()[0]
+                    if integrity != "ok":
+                        raise sqlite3.DatabaseError(
+                            f"backup integrity check failed: {integrity}"
+                        )
+                    foreign_key_errors = backup_connection.execute(
+                        "PRAGMA foreign_key_check"
+                    ).fetchall()
+                    if foreign_key_errors:
+                        raise sqlite3.DatabaseError(
+                            f"backup contains foreign-key violations: {foreign_key_errors!r}"
+                        )
+                finally:
+                    backup_connection.close()
+
+            with temporary.open("rb") as backup_file:
+                os.fsync(backup_file.fileno())
+
+            # Unlike os.replace(), os.link() cannot silently overwrite a file
+            # created by another process after the initial existence check.
+            os.link(temporary, target)
+            return target
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def derive(self, required_criteria: Iterable[str]) -> Verdict:
         """Derive a verdict from the records currently persisted in this store."""
