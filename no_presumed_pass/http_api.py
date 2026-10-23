@@ -241,6 +241,13 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
                 self._error(400, "invalid_content_length", "Content-Length must contain ASCII decimal digits only.")
                 self.close_connection = True
                 return
+            # Bound the decimal representation before int() so a hostile header
+            # cannot trigger Python's large-integer conversion limit and drop the
+            # connection without a deterministic HTTP response.
+            if len(raw_length) > len(str(MAX_BODY_BYTES)):
+                self._error(413, "payload_too_large", "Request body exceeds the 64 KiB limit.")
+                self.close_connection = True
+                return
             length = int(raw_length)
             if length > MAX_BODY_BYTES:
                 self._error(413, "payload_too_large", "Request body exceeds the 64 KiB limit.")
