@@ -36,8 +36,8 @@ The core is dependency-free. CI is expected to run the same command on every pul
 
 ## Readiness status
 
-- [ ] Evidence records durably stored with append-only provenance
-- [ ] Deterministic three-valued verdict engine and edge-case tests
+- [x] Local SQLite evidence store with atomic batch writes, unique IDs, schema versioning, and update/delete guards (unit-tested; not yet a production service)
+- [x] Deterministic three-valued verdict engine and edge-case tests
 - [ ] API contract, authentication, and authorization boundaries
 - [ ] Database schema, migrations, transaction and restore tests
 - [ ] Security/dependency scanning and secret handling
