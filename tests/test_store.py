@@ -43,6 +43,29 @@ class EvidenceStoreTests(unittest.TestCase):
         self.assertIs(result.status, VerdictStatus.PASS)
         self.assertEqual(result.evidence_ids, ("build", "tests"))
 
+    def test_backup_is_consistent_and_can_be_reopened(self) -> None:
+        self.store.append_many((record("build", "build"), record("tests", "tests")))
+        destination = self.database.with_name("evidence-backup.sqlite3")
+
+        self.assertEqual(self.store.backup_to(destination), destination)
+
+        with EvidenceStore(destination) as backup:
+            result = backup.derive(("build", "tests"))
+            self.assertIs(result.status, VerdictStatus.PASS)
+            self.assertEqual(result.evidence_ids, ("build", "tests"))
+
+        with sqlite3.connect(destination) as connection:
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+
+    def test_backup_never_overwrites_an_existing_destination(self) -> None:
+        destination = self.database.with_name("preserve-existing.db")
+        destination.write_bytes(b"existing user data")
+
+        with self.assertRaises(FileExistsError):
+            self.store.backup_to(destination)
+
+        self.assertEqual(destination.read_bytes(), b"existing user data")
+
     def test_existing_evidence_id_cannot_be_overwritten(self) -> None:
         original = record("same-id", outcome=EvidenceOutcome.PASS)
         self.store.append(original)
