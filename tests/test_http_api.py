@@ -98,6 +98,62 @@ class EvidenceHTTPAPITests(unittest.TestCase):
         self.assertEqual(response["verdict"]["status"], VerdictStatus.PASS.value)
         self.assertEqual(set(response["verdict"]["evidence_ids"]), {"build-1", "test-1"})
 
+    def test_evidence_listing_is_bounded_and_pages_are_deterministic(self) -> None:
+        for evidence_id, criterion in (
+            ("page-1", "build"),
+            ("page-2", "build"),
+            ("page-3", "security"),
+        ):
+            status, _, _ = self.request(
+                "POST", "/v1/evidence", self.evidence(evidence_id, criterion)
+            )
+            self.assertEqual(status, 201)
+
+        status, first, _ = self.request("GET", "/v1/evidence?limit=2&offset=0")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [item["evidence_id"] for item in first["evidence"]],
+            ["page-1", "page-2"],
+        )
+        self.assertEqual(
+            first["pagination"],
+            {"limit": 2, "offset": 0, "has_more": True, "next_offset": 2},
+        )
+
+        status, second, _ = self.request("GET", "/v1/evidence?limit=2&offset=2")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [item["evidence_id"] for item in second["evidence"]],
+            ["page-3"],
+        )
+        self.assertEqual(
+            second["pagination"],
+            {"limit": 2, "offset": 2, "has_more": False, "next_offset": None},
+        )
+
+        status, filtered, _ = self.request(
+            "GET", "/v1/evidence?criterion=build&limit=1"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([item["criterion"] for item in filtered["evidence"]], ["build"])
+        self.assertTrue(filtered["pagination"]["has_more"])
+
+    def test_evidence_pagination_rejects_ambiguous_or_unbounded_values(self) -> None:
+        for query in (
+            "limit=0",
+            "limit=101",
+            "limit=1&limit=2",
+            "limit=1.5",
+            "offset=-1",
+            "offset=1000001",
+            "offset=1&offset=2",
+            "limit=",
+        ):
+            with self.subTest(query=query):
+                status, body, _ = self.request("GET", f"/v1/evidence?{query}")
+                self.assertEqual(status, 400)
+                self.assertEqual(body["error"]["code"], "invalid_query")
+
     def test_missing_required_evidence_is_indeterminate(self) -> None:
         status, _, _ = self.request("POST", "/v1/evidence", self.evidence("build-1", "build"))
         self.assertEqual(status, 201)
