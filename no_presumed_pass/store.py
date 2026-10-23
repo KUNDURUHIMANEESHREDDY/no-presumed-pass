@@ -69,6 +69,18 @@ class EvidenceStore:
                 )
                 self._connection.execute(
                     """
+                    CREATE INDEX IF NOT EXISTS evidence_observed_order
+                    ON evidence (observed_at, evidence_id)
+                    """
+                )
+                self._connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS evidence_criterion_observed_order
+                    ON evidence (criterion, observed_at, evidence_id)
+                    """
+                )
+                self._connection.execute(
+                    """
                     CREATE TRIGGER IF NOT EXISTS evidence_no_update
                     BEFORE UPDATE ON evidence
                     BEGIN
@@ -146,31 +158,43 @@ class EvidenceStore:
                 raise
         return batch
 
-    def list_evidence(self, criterion: str | None = None) -> tuple[EvidenceRecord, ...]:
-        """Read immutable evidence in deterministic observation-time order."""
+    def list_evidence(
+        self,
+        criterion: str | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[EvidenceRecord, ...]:
+        """Read evidence in deterministic order, optionally using bounded pagination."""
         if criterion is not None:
             if not isinstance(criterion, str) or not criterion.strip():
                 raise ValueError("criterion must be a non-empty string when supplied")
             if criterion != criterion.strip():
                 raise ValueError("criterion must not contain surrounding whitespace")
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or limit < 1
+        ):
+            raise ValueError("limit must be a positive integer when supplied")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+
+        query = (
+            "SELECT evidence_id, criterion, outcome, source, observed_at FROM evidence"
+        )
+        parameters: list[object] = []
+        if criterion is not None:
+            query += " WHERE criterion = ?"
+            parameters.append(criterion)
+        query += " ORDER BY observed_at, evidence_id"
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            parameters.extend((limit, offset))
+        elif offset:
+            query += " LIMIT -1 OFFSET ?"
+            parameters.append(offset)
 
         with self._lock:
-            if criterion is None:
-                rows = self._connection.execute(
-                    """
-                    SELECT evidence_id, criterion, outcome, source, observed_at
-                    FROM evidence ORDER BY observed_at, evidence_id
-                    """
-                ).fetchall()
-            else:
-                rows = self._connection.execute(
-                    """
-                    SELECT evidence_id, criterion, outcome, source, observed_at
-                    FROM evidence WHERE criterion = ?
-                    ORDER BY observed_at, evidence_id
-                    """,
-                    (criterion,),
-                ).fetchall()
+            rows = self._connection.execute(query, parameters).fetchall()
 
         return tuple(
             EvidenceRecord(
