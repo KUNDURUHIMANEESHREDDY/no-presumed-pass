@@ -119,7 +119,11 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
             self._send_json(status, {"error": {"code": code, "message": message}})
 
         def _authorized(self) -> bool:
-            header = self.headers.get("Authorization", "")
+            # Duplicate Authorization fields are ambiguous across HTTP stacks.
+            # Accept exactly one field so a proxy and this handler cannot select
+            # different credentials for the same request.
+            authorization_headers = self.headers.get_all("Authorization", [])
+            header = authorization_headers[0] if len(authorization_headers) == 1 else ""
             scheme, separator, supplied = header.partition(" ")
             valid = (
                 separator == " "
@@ -136,13 +140,36 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
             if parsed.path == "/healthz":
                 self._send_json(200, {"status": "ok"})
                 return
+            if parsed.path == "/readyz":
+                # Liveness only proves the HTTP process is responsive. Readiness
+                # must also prove that the evidence store can serve a bounded read.
+                try:
+                    store.list_evidence(limit=1)
+                except Exception:  # noqa: BLE001 - do not leak storage details
+                    self._error(503, "not_ready", "Evidence storage is unavailable.")
+                else:
+                    self._send_json(200, {"status": "ready"})
+                return
             if parsed.path not in {"/v1/evidence", "/v1/verdict"}:
                 self._error(404, "not_found", "Route not found.")
                 return
             if not self._authorized():
                 return
 
-            query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=False)
+            try:
+                query = parse_qs(
+                    parsed.query,
+                    keep_blank_values=True,
+                    strict_parsing=False,
+                    max_num_fields=MAX_CRITERIA + 3,
+                )
+            except ValueError:
+                self._error(
+                    400,
+                    "invalid_query",
+                    f"Too many query parameters; at most {MAX_CRITERIA} criteria are supported.",
+                )
+                return
             allowed = (
                 {"criterion", "limit", "offset"}
                 if parsed.path == "/v1/evidence"
@@ -210,23 +237,37 @@ def make_handler(store: EvidenceStore, token: str) -> type[BaseHTTPRequestHandle
             if not self._authorized():
                 return
 
-            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            content_type_headers = self.headers.get_all("Content-Type", [])
+            if len(content_type_headers) != 1:
+                self._error(400, "invalid_content_type", "Exactly one Content-Type header is required.")
+                self.close_connection = True
+                return
+            content_type = content_type_headers[0].split(";", 1)[0].strip().lower()
             if content_type != "application/json":
                 self._error(415, "unsupported_media_type", "Content-Type must be application/json.")
                 return
-            raw_length = self.headers.get("Content-Length")
-            if raw_length is None:
+            content_lengths = self.headers.get_all("Content-Length", [])
+            if not content_lengths:
                 self._error(411, "length_required", "Content-Length is required.")
                 self.close_connection = True
                 return
-            try:
-                length = int(raw_length)
-            except ValueError:
-                length = -1
-            if length < 0:
-                self._error(400, "invalid_content_length", "Content-Length must be a non-negative integer.")
+            if len(content_lengths) != 1:
+                self._error(400, "invalid_content_length", "Exactly one Content-Length header is required.")
                 self.close_connection = True
                 return
+            raw_length = content_lengths[0]
+            if not raw_length.isascii() or not raw_length.isdecimal():
+                self._error(400, "invalid_content_length", "Content-Length must contain ASCII decimal digits only.")
+                self.close_connection = True
+                return
+            # Bound the decimal representation before int() so a hostile header
+            # cannot trigger Python's large-integer conversion limit and drop the
+            # connection without a deterministic HTTP response.
+            if len(raw_length) > len(str(MAX_BODY_BYTES)):
+                self._error(413, "payload_too_large", "Request body exceeds the 64 KiB limit.")
+                self.close_connection = True
+                return
+            length = int(raw_length)
             if length > MAX_BODY_BYTES:
                 self._error(413, "payload_too_large", "Request body exceeds the 64 KiB limit.")
                 self.close_connection = True

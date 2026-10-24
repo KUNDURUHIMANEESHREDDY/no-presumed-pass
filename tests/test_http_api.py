@@ -76,6 +76,18 @@ class EvidenceHTTPAPITests(unittest.TestCase):
         self.assertEqual(body, {"status": "ok"})
         self.assertEqual(headers["cache-control"], "no-store")
 
+    def test_readiness_reflects_storage_availability_without_leaking_details(self) -> None:
+        status, body, _ = self.request("GET", "/readyz", token=None)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"status": "ready"})
+
+        self.store.close()
+        status, body, _ = self.request("GET", "/readyz", token=None)
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"]["code"], "not_ready")
+        self.assertNotIn("sqlite", json.dumps(body).lower())
+        self.assertNotIn(str(self.database), json.dumps(body))
+
     def test_evidence_read_and_write_require_bearer_token(self) -> None:
         status, body, _ = self.request("POST", "/v1/evidence", self.evidence("e-1", "build"), token=None)
         self.assertEqual(status, 401)
@@ -154,6 +166,11 @@ class EvidenceHTTPAPITests(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertEqual(body["error"]["code"], "invalid_query")
 
+    def test_verdict_rejects_excessive_query_parameters_before_parsing_all(self) -> None:
+        query = "&".join("criterion=check" for _ in range(104))
+        status, body, _ = self.request("GET", f"/v1/verdict?{query}")
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "invalid_query")
     def test_missing_required_evidence_is_indeterminate(self) -> None:
         status, _, _ = self.request("POST", "/v1/evidence", self.evidence("build-1", "build"))
         self.assertEqual(status, 201)
@@ -178,6 +195,71 @@ class EvidenceHTTPAPITests(unittest.TestCase):
         naive["observed_at"] = "2026-10-24T00:00:00"
         status, _, _ = self.request("POST", "/v1/evidence", naive)
         self.assertEqual(status, 400)
+
+    def test_extremely_long_content_length_is_rejected_without_integer_conversion(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v1/evidence")
+            connection.putheader("Authorization", f"Bearer {TOKEN}")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", "9" * 5000)
+            connection.endheaders()
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            self.assertEqual(response.status, 413)
+            self.assertEqual(body["error"]["code"], "payload_too_large")
+        finally:
+            connection.close()
+
+    def test_duplicate_authorization_headers_are_rejected(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v1/evidence")
+            connection.putheader("Authorization", f"Bearer {TOKEN}")
+            connection.putheader("Authorization", "Bearer different-token-that-is-also-long")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", "2")
+            connection.endheaders(b"{}")
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            self.assertEqual(response.status, 401)
+            self.assertEqual(body["error"]["code"], "unauthorized")
+            self.assertEqual(self.store.list_evidence(), ())
+        finally:
+            connection.close()
+
+    def test_duplicate_content_type_headers_are_rejected(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v1/evidence")
+            connection.putheader("Authorization", f"Bearer {TOKEN}")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Type", "text/plain")
+            connection.putheader("Content-Length", "2")
+            connection.endheaders(b"{}")
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            self.assertEqual(response.status, 400)
+            self.assertEqual(body["error"]["code"], "invalid_content_type")
+            self.assertEqual(self.store.list_evidence(), ())
+        finally:
+            connection.close()
+
+    def test_duplicate_content_length_headers_are_rejected(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v1/evidence")
+            connection.putheader("Authorization", f"Bearer {TOKEN}")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", "2")
+            connection.putheader("Content-Length", "3")
+            connection.endheaders(b"{}")
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            self.assertEqual(response.status, 400)
+            self.assertEqual(body["error"]["code"], "invalid_content_length")
+        finally:
+            connection.close()
 
     def test_body_limit_and_media_type_are_enforced(self) -> None:
         status, body, _ = self.request(

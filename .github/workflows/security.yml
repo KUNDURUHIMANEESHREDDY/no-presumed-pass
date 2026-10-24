@@ -51,3 +51,21 @@ jobs:
           languages: python
       - name: Analyze Python code
         uses: github/codeql-action/analyze@v3
+
+  security-required:
+    name: security-required
+    if: always()
+    needs: [secret-scan, codeql]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Enforce required security verification
+        env:
+          SECRET_SCAN_RESULT: ${{ needs.secret-scan.result }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
+        run: |
+          set -eu
+          echo "secret-scan: $SECRET_SCAN_RESULT"
+          echo "codeql: $CODEQL_RESULT"
+          test "$SECRET_SCAN_RESULT" = "success"
+          test "$CODEQL_RESULT" = "success"
