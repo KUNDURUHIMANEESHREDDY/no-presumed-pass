@@ -28,3 +28,18 @@ jobs:
           python-version: "3.11"
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+
+  required:
+    name: required
+    if: always()
+    needs: [unit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Enforce required API verification
+        env:
+          UNIT_RESULT: ${{ needs.unit.result }}
+        run: |
+          set -eu
+          echo "unit: $UNIT_RESULT"
+          test "$UNIT_RESULT" = "success"
